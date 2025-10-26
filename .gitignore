@@ -24,6 +24,8 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# Keep the exe file
+!dist/TextFormatter.exe
 
 # Installer logs
 pip-log.txt
