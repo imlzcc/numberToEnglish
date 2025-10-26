@@ -28,15 +28,19 @@ A Python GUI tool that converts numbers in text to their English word equivalent
 
 ## Number Conversion Rules
 
-- **Years (1900-2099)**:
+- **Four-digit Numbers (1000-9999) - Year Format**:
+  - 1733 → seventeen thirty-three
   - 1947 → nineteen forty-seven
   - 2001 → two thousand one
   - 2023 → two thousand twenty-three
+  - 1234 → twelve thirty-four
+  - 5678 → fifty-six seventy-eight
 
 - **Other Numbers**:
   - 1-20: Direct word mapping
   - 21-99: Combined form (e.g., 25 → twenty-five)
-  - 100+: Full English expression (e.g., 123 → one hundred twenty-three)
+  - 100-999: Full English expression (e.g., 123 → one hundred twenty-three)
+  - 10000+: Full English expression (e.g., 12345 → twelve thousand three hundred forty-five)
 
 - **Numbers with Suffixes**:
   - 1991s → nineteen ninety-ones
@@ -62,10 +66,10 @@ A Python GUI tool that converts numbers in text to their English word equivalent
 
 **Input:**
 ```
-On December 4th, 1991s, after 64 years of circling the globe, Pan American World Airways ran out of money.
+On December 4th, 1991s, after 64 years of circling the globe, Pan American World Airways ran out of money. The year 1733 was also significant.
 ```
 
 **Output:**
 ```
-On December fourth, nineteen ninety-ones, after sixty-four years of circling the globe, Pan American World Airways ran out of money.
+On December fourth, nineteen ninety-ones, after sixty-four years of circling the globe, Pan American World Airways ran out of money. The year seventeen thirty-three was also significant.
 ```

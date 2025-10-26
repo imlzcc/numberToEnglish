@@ -117,8 +117,8 @@ class TextFormatter:
             suffix = match.group(2)   # 获取后缀部分
             num = int(num_str)
             
-            # 如果是年份，特殊处理
-            if self.is_year(num):
+            # 如果是四位数，按照年份格式处理
+            if 1000 <= num <= 9999:
                 if num < 2000:
                     year_part1 = num // 100
                     year_part2 = num % 100
