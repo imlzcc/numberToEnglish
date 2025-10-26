@@ -1,50 +1,71 @@
-# 文本格式化工具
+# Number to English Converter
 
-一个简单的文本格式化工具，可以将文本中的数字转换为对应的英文单词。
+A Python GUI tool that converts numbers in text to their English word equivalents, designed specifically for voice-over and text-to-speech applications.
 
-## 功能特点
+## Features
 
-- **实时预览**: 输入文本时自动显示处理结果
-- **智能数字识别**: 
-  - 年份识别：1947 → nineteen forty-seven
-  - 其他数字：123 → one hundred twenty-three
-- **导出功能**: 将处理后的文本保存为文件
-- **简洁界面**: 易于使用的图形界面
+- **Real-time Preview**: Automatically displays processed results as you type
+- **Smart Number Recognition**: 
+  - Year detection: 1947 → nineteen forty-seven
+  - Other numbers: 123 → one hundred twenty-three
+  - Suffix support: 1991s → nineteen ninety-ones, 4th → fourth
+- **Export Function**: Save processed text to file
+- **Side-by-side Layout**: Easy comparison between input and output
+- **Voice-over Friendly**: Prevents Chinese pronunciation in TTS systems
 
-## 使用方法
+## Usage
 
-1. 运行程序：
+1. Run the program:
    ```bash
    python text_formatter.py
    ```
 
-2. 在输入文本框中输入包含数字的文本
+2. Enter text containing numbers in the left input area
 
-3. 预览框会实时显示处理后的结果
+3. The right preview area will show the processed results in real-time
 
-4. 点击"导出"按钮保存处理后的文本
+4. Click "Export" to save the processed text to a file
 
-## 数字转换规则
+## Number Conversion Rules
 
-- **年份 (1900-2099)**:
+- **Years (1900-2099)**:
   - 1947 → nineteen forty-seven
   - 2001 → two thousand one
   - 2023 → two thousand twenty-three
 
-- **其他数字**:
-  - 1-20: 直接对应英文单词
-  - 21-99: 组合形式 (如: 25 → twenty-five)
-  - 100+: 完整英文表达 (如: 123 → one hundred twenty-three)
+- **Other Numbers**:
+  - 1-20: Direct word mapping
+  - 21-99: Combined form (e.g., 25 → twenty-five)
+  - 100+: Full English expression (e.g., 123 → one hundred twenty-three)
 
-## 系统要求
+- **Numbers with Suffixes**:
+  - 1991s → nineteen ninety-ones
+  - 4th → fourth
+  - 1st → first
+  - 2nd → second
+  - 3rd → third
+
+## System Requirements
 
 - Python 3.6+
-- tkinter (通常随Python一起安装)
+- tkinter (usually included with Python)
 
-## 界面说明
+## Interface Description
 
-- **输入文本框**: 输入需要处理的文本
-- **预览框**: 显示处理后的结果
-- **处理文本**: 手动触发处理
-- **导出**: 保存处理后的文本到文件
-- **清空**: 清空所有文本内容
+- **Input Text Area**: Enter text to be processed
+- **Preview Area**: Shows processed results
+- **Process Text**: Manually trigger processing
+- **Export**: Save processed text to file
+- **Clear**: Clear all text content
+
+## Example
+
+**Input:**
+```
+On December 4th, 1991s, after 64 years of circling the globe, Pan American World Airways ran out of money.
+```
+
+**Output:**
+```
+On December fourth, nineteen ninety-ones, after sixty-four years of circling the globe, Pan American World Airways ran out of money.
+```
