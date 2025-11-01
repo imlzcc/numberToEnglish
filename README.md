@@ -1,9 +1,10 @@
-# Number to English Converter
+# Number to English Converter & F5-TTS Voice Generator
 
-A Python GUI tool that converts numbers in text to their English word equivalents, designed specifically for voice-over and text-to-speech applications.
+A Python GUI tool that converts numbers in text to their English word equivalents and integrates with F5-TTS for voice generation, designed specifically for voice-over and text-to-speech applications.
 
 ## Features
 
+### Text Formatting
 - **Real-time Preview**: Automatically displays processed results as you type
 - **Smart Number Recognition**: 
   - Year detection: 1947 → nineteen forty-seven
@@ -12,6 +13,18 @@ A Python GUI tool that converts numbers in text to their English word equivalent
 - **Export Function**: Save processed text to file
 - **Side-by-side Layout**: Easy comparison between input and output
 - **Voice-over Friendly**: Prevents Chinese pronunciation in TTS systems
+
+### F5-TTS Voice Generation
+- **Reference Audio Support**: Upload local files or provide remote URLs
+- **Reference Text Input**: Manually enter or auto-transcribe reference audio
+- **Advanced Parameters**:
+  - Playback speed (0.1 - 2.0)
+  - NFE steps
+  - Cross-fade duration
+  - Remove silences
+  - Random seed generation (10-digit)
+- **Settings Persistence**: Automatically saves and restores last-used settings
+- **Debug Logging**: Comprehensive log section for troubleshooting
 
 ## Usage
 
@@ -51,16 +64,30 @@ A Python GUI tool that converts numbers in text to their English word equivalent
 
 ## System Requirements
 
-- Python 3.6+
+- Python 3.6+ (for source code)
 - tkinter (usually included with Python)
+- requests library (for F5-TTS integration)
+- F5-TTS API server (for voice generation feature)
 
 ## Interface Description
 
+### Text Formatting Section
 - **Input Text Area**: Enter text to be processed
 - **Preview Area**: Shows processed results
 - **Process Text**: Manually trigger processing
 - **Export**: Save processed text to file
 - **Clear**: Clear all text content
+
+### F5-TTS Section
+- **Server URL**: F5-TTS API server address
+- **Reference Audio**: Upload or provide URL for reference audio
+- **Reference Text**: Manually enter or leave empty for auto-transcription
+- **Generation Text**: Text to be converted to speech
+- **Advanced Settings**: Speed, NFE steps, crossfade, remove silences, seed
+- **Generate Speech**: Trigger voice generation
+- **Save Audio**: Save generated audio file
+- **Open Audio**: Open generated audio file
+- **Debug Log**: View detailed logs for troubleshooting
 
 ## Example
 
