@@ -610,8 +610,10 @@ class TextFormatter:
         content = ""
         transcribed_ref_text = None  # 用于存储Whisper转写的参考文本
         for _ in range(60):  # 60 次 * 2s = 120s
-            # 如果已经获取到音频URL，退出循环
-            if audio_url:
+            # 如果已经获取到音频URL和转写文本，可以退出循环
+            # 但如果只有音频URL而没有转写文本，继续解析寻找转写文本
+            if audio_url and transcribed_ref_text:
+                self.log(f"[TTS] 已获取到音频URL和转写文本，退出轮询")
                 break
             try:
                 r = requests.get(url_stream, timeout=30)
@@ -665,6 +667,9 @@ class TextFormatter:
                                     self.log(f"[TTS] 检测到process_completed消息（JSON格式）")
                                     output = msg_json.get("output", {})
                                     data = output.get("data", [])
+                                    self.log(f"[TTS][DEBUG] output.data长度: {len(data) if isinstance(data, list) else 'N/A'}")
+                                    if isinstance(data, list):
+                                        self.log(f"[TTS][DEBUG] data内容预览: {str(data)[:500]}")
                                     if isinstance(data, list) and len(data) >= 1:
                                         # data[0] 是音频文件对象
                                         audio_item = data[0]
@@ -683,11 +688,20 @@ class TextFormatter:
                                                     # 相对路径，添加server
                                                     audio_url = f"{server}{audio_url}"
                                                 self.log(f"[TTS] 从process_completed提取到音频URL: {audio_url}")
-                                                # 提取转写的参考文本
-                                                if len(data) >= 3 and isinstance(data[2], str):
-                                                    transcribed_ref_text = data[2].strip()
-                                                    if transcribed_ref_text:
-                                                        self.log(f"[TTS] 从process_completed提取到转写的参考文本: {transcribed_ref_text[:100]}")
+                                                # 提取转写的参考文本（output.data[2]是转写的参考文本）
+                                                self.log(f"[TTS][DEBUG] 尝试提取转写文本，data长度={len(data)}")
+                                                if len(data) >= 3:
+                                                    self.log(f"[TTS][DEBUG] data[2]类型: {type(data[2])}, 值预览: {str(data[2])[:100]}")
+                                                    if isinstance(data[2], str):
+                                                        transcribed_ref_text = data[2].strip()
+                                                        if transcribed_ref_text:
+                                                            self.log(f"[TTS] 从process_completed提取到转写的参考文本: {transcribed_ref_text[:100]}")
+                                                        else:
+                                                            self.log(f"[TTS][WARN] data[2]存在但为空字符串")
+                                                    else:
+                                                        self.log(f"[TTS][WARN] data[2]不是字符串，类型={type(data[2])}")
+                                                else:
+                                                    self.log(f"[TTS][WARN] data数组长度不足，len={len(data)}, 需要至少3个元素（音频、图片、转写文本）")
                                                 # 找到音频URL，跳出内层循环，外层循环会在下次迭代时检查audio_url并退出
                                                 break
                             except json_module.JSONDecodeError:
@@ -756,27 +770,32 @@ class TextFormatter:
                                             if path_val:
                                                 # 如果是 Windows 路径，尝试转换为 /file= 格式
                                                 if '\\' in path_val or path_val.startswith('C:'):
-                                                    # 提取文件名部分，转换为 /file= 格式
-                                                    filename = os.path.basename(path_val)
-                                                    audio_url = f"{server}/file={filename}"
+                                                    # Windows路径，转换为URL格式
+                                                    audio_url = f"{server}/gradio_api/file={path_val}"
                                                 elif path_val.startswith('/file='):
                                                     audio_url = f"{server}{path_val}"
                                                 else:
                                                     audio_url = path_val
                                         if audio_url:
                                             self.log(f"[TTS] extracted audio_url from SSE: {audio_url}")
-                                            break
+                                        # 尝试从SSE格式的data数组中提取转写文本（data[2]可能是转写文本）
+                                        if len(data_array) >= 3 and isinstance(data_array[2], str):
+                                            transcribed_ref_text = data_array[2].strip()
+                                            if transcribed_ref_text:
+                                                self.log(f"[TTS] 从SSE格式的data数组中提取到转写文本: {transcribed_ref_text[:100]}")
+                                        # 注意：即使提取到了音频URL，也不要立即break，继续解析寻找process_completed消息
+                                        # 因为process_completed消息包含完整的转写文本
                             except Exception as parse_err:
                                 self.log(f"[TTS] SSE parse error: {parse_err}")
-                    # 旧的正则匹配兜底
-                    murl = re.search(r'(https?://[^\s"\\]+\.wav)', content)
-                    if murl:
-                        audio_url = murl.group(1)
-                        break
-                    mfile = re.search(r'(\/file=[^\s"\\]+\.wav)', content)
-                    if mfile:
-                        audio_url = f"{server}{mfile.group(1)}"
-                        break
+                    # 旧的正则匹配兜底（仅在未找到音频URL时使用）
+                    if not audio_url:
+                        murl = re.search(r'(https?://[^\s"\\]+\.wav)', content)
+                        if murl:
+                            audio_url = murl.group(1)
+                        mfile = re.search(r'(\/file=[^\s"\\]+\.wav)', content)
+                        if mfile:
+                            audio_url = f"{server}{mfile.group(1)}"
+                    # 注意：即使找到了音频URL，也不要break，继续解析寻找process_completed消息
             except Exception:
                 pass
             time.sleep(2)
@@ -917,11 +936,20 @@ class TextFormatter:
                 self.log(f"[TTS] 尝试提取转写结果时出错: {e}")
         
         # 如果获取到转写结果，更新reference text框
+        # 无论当前ref_text是什么，都用服务器返回的转写结果更新
+        self.log(f"[TTS][DEBUG] 检查转写文本: transcribed_ref_text={transcribed_ref_text}")
         if transcribed_ref_text and transcribed_ref_text.strip():
+            transcribed_text = transcribed_ref_text.strip()
+            self.log(f"[TTS] 准备更新参考文本为转写结果: {transcribed_text[:100]}")
             def update_ref_text():
-                self.ref_text_var.set(transcribed_ref_text.strip())
-                self.log(f"[TTS] 已自动更新参考文本为转写结果: {transcribed_ref_text.strip()[:100]}")
+                # 更新UI中的参考文本字段
+                self.ref_text_var.set(transcribed_text)
+                self.log(f"[TTS] 已自动更新参考文本为转写结果: {transcribed_text[:100]}")
+                # 延迟保存配置，确保ref_text也被保存
+                self.root.after(500, self.save_config)
             self.root.after(0, update_ref_text)
+        else:
+            self.log(f"[TTS][WARN] 未获取到转写文本，transcribed_ref_text={transcribed_ref_text}")
 
         # 下载到临时文件
         self.root.after(0, lambda: self.tts_status_var.set("正在下载音频..."))
