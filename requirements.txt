@@ -4,3 +4,4 @@
 # tkinter-tooltip==2.0.0
 # Pillow==10.0.0  # 用于图标和图像处理
 requests>=2.31.0
+pydub>=0.25.1  # 用于音频拼接

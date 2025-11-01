@@ -10,6 +10,13 @@ import random
 import string
 import time
 
+# 尝试导入pydub，用于音频拼接
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+
 class TextFormatter:
     def __init__(self, root):
         self.root = root
@@ -28,6 +35,10 @@ class TextFormatter:
             20: "twenty", 30: "thirty", 40: "forty", 50: "fifty",
             60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"
         }
+        
+        # 初始化模型变量字典（在setup_ui之前初始化）
+        self.tts_vars = {}  # 格式: {"f5tts": {...}, "e2tts": {...}}
+        self.current_tts_model = "f5tts"  # 默认选中F5-TTS
         
         self.setup_ui()
         self.load_config()
@@ -78,158 +89,40 @@ class TextFormatter:
         self.preview_text = scrolledtext.ScrolledText(main_frame, height=15, wrap=tk.WORD, state=tk.DISABLED, font=("Arial", 10))
         self.preview_text.grid(row=1, column=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # ========== 配音（F5-TTS）区域 ==========
+        # ========== 配音区域（标签页）==========
         ttk.Separator(main_frame, orient='horizontal').grid(row=2, column=0, columnspan=3, sticky=(tk.E, tk.W), pady=(12, 8))
-
-        tts_frame = ttk.LabelFrame(main_frame, text="配音 (F5-TTS)")
-        tts_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), padx=0, pady=(0, 4))
-        for i in range(6):
-            tts_frame.columnconfigure(i, weight=1)
-
-        # 服务器地址
-        ttk.Label(tts_frame, text="服务地址:").grid(row=0, column=0, sticky=tk.W, padx=(8, 6), pady=(8, 4))
-        self.server_var = tk.StringVar(value="http://127.0.0.1:7860")
-        self.server_entry = ttk.Entry(tts_frame, textvariable=self.server_var)
-        self.server_entry.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=(0, 8), pady=(8, 4))
-
-        # 参考音频
-        ttk.Label(tts_frame, text="参考音频:").grid(row=1, column=0, sticky=tk.W, padx=(8, 6))
-        self.ref_audio_var = tk.StringVar()
-        self.ref_audio_entry = ttk.Entry(tts_frame, textvariable=self.ref_audio_var)
-        self.ref_audio_entry.grid(row=1, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=(0, 8))
-        ttk.Button(tts_frame, text="选择...", command=self.browse_ref_audio, width=10).grid(row=1, column=3, sticky=tk.W, padx=(0, 8))
-
-        # 参考文本
-        ttk.Label(tts_frame, text="参考文本:").grid(row=2, column=0, sticky=tk.W, padx=(8, 6), pady=(6, 0))
-        self.ref_text_var = tk.StringVar()
-        self.ref_text_entry = ttk.Entry(tts_frame, textvariable=self.ref_text_var)
-        self.ref_text_entry.grid(row=2, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 8), pady=(6, 0))
-
-        # 生成文本
-        ttk.Label(tts_frame, text="生成文本:").grid(row=3, column=0, sticky=tk.NW, padx=(8, 6), pady=(6, 6))
-        self.gen_text = scrolledtext.ScrolledText(tts_frame, height=4, wrap=tk.WORD)
-        self.gen_text.grid(row=3, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 8), pady=(6, 6))
-        ttk.Button(tts_frame, text="使用预览文本", command=self.use_preview_text).grid(row=3, column=4, sticky=tk.NE, padx=(0, 8), pady=(6, 6))
-
-        # 高级设置参数
-        adv_frame = ttk.LabelFrame(tts_frame, text="高级设置")
-        adv_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), padx=8, pady=(6, 6))
-        for i in range(4):
-            adv_frame.columnconfigure(i, weight=1)
-
-        # 随机种子
-        self.randomize_seed_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(adv_frame, text="随机种子", variable=self.randomize_seed_var).grid(row=0, column=0, sticky=tk.W, padx=(8, 4))
-        ttk.Label(adv_frame, text="种子:").grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
-        default_seed = random.randint(1000000000, 9999999999)  # 10位数字
-        self.seed_var = tk.IntVar(value=default_seed)
-        seed_entry = ttk.Entry(adv_frame, textvariable=self.seed_var, width=10)
-        seed_entry.grid(row=0, column=2, sticky=tk.W, padx=(0, 8))
         
-        # 添加种子值验证：支持10位数字（0-9999999999），与前端保持一致
-        def validate_seed(*args):
-            try:
-                seed_val = self.seed_var.get()
-                if seed_val < 0:
-                    self.seed_var.set(0)
-                elif seed_val > 9999999999:
-                    self.seed_var.set(9999999999)
-            except (ValueError, TypeError):
-                self.seed_var.set(0)
+        # 创建标签页容器
+        tts_notebook = ttk.Notebook(main_frame)
+        tts_notebook.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), padx=0, pady=(0, 4))
         
-        self.seed_var.trace('w', validate_seed)
-
-        # 移除静音
-        self.remove_silences_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(adv_frame, text="移除静音", variable=self.remove_silences_var).grid(row=0, column=3, sticky=tk.W, padx=(8, 8))
-
-        # 播放速度 (Speed) - 范围0.1-2.0，最小单位0.1
-        ttk.Label(adv_frame, text="播放速度:").grid(row=1, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 0))
-        self.speed_var = tk.DoubleVar(value=1.0)
-        speed_val_label = ttk.Label(adv_frame, text="1.0", width=6)
-        speed_val_label.grid(row=1, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        # 创建E2TTS标签页（放在前面）
+        e2tts_frame = ttk.Frame(tts_notebook, padding="8")
+        tts_notebook.add(e2tts_frame, text="E2TTS")
         
-        # 创建Scale滑块（先创建，不绑定对齐逻辑）
-        speed_scale = ttk.Scale(adv_frame, from_=0.1, to=2.0, variable=self.speed_var, orient=tk.HORIZONTAL)
-        speed_scale.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 0))
+        # 创建F5-TTS标签页
+        f5tts_frame = ttk.Frame(tts_notebook, padding="8")
+        tts_notebook.add(f5tts_frame, text="F5-TTS")
         
-        # 更新显示标签和延迟保存（合并到一个trace，避免冲突）
-        self._speed_save_timer = None
-        def update_speed_display_and_save(*args):
-            val = self.speed_var.get()
-            # 只用于显示：四舍五入到最近的0.1倍数
-            snapped = round(val / 0.1) * 0.1
-            if snapped < 0.1:
-                snapped = 0.1
-            elif snapped > 2.0:
-                snapped = 2.0
-            # 只更新显示标签
-            speed_val_label.config(text=f"{snapped:.1f}")
-            # 延迟保存（避免拖动时频繁保存）
-            if not self._loading_config:
-                if self._speed_save_timer:
-                    self.root.after_cancel(self._speed_save_timer)
-                self._speed_save_timer = self.root.after(500, self.save_config)
+        # 为每个标签页构建UI（使用通用函数）
+        self._build_tts_tab(e2tts_frame, "e2tts")
+        self._build_tts_tab(f5tts_frame, "f5tts")
         
-        # 绑定变量变化
-        self.speed_var.trace('w', update_speed_display_and_save)
-
-        # NFE Steps
-        ttk.Label(adv_frame, text="NFE步数:").grid(row=2, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 0))
-        self.nfe_steps_var = tk.IntVar(value=32)
-        nfe_scale = ttk.Scale(adv_frame, from_=4, to=64, variable=self.nfe_steps_var, orient=tk.HORIZONTAL)
-        nfe_scale.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 0))
-        nfe_val_label = ttk.Label(adv_frame, textvariable=self.nfe_steps_var, width=6)
-        nfe_val_label.grid(row=2, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        # 保存当前选中的标签页（已在 __init__ 中初始化，这里只需要绑定事件）
+        def on_tab_changed(event):
+            selected = tts_notebook.index(tts_notebook.select())
+            self.current_tts_model = "e2tts" if selected == 0 else "f5tts"
+            self.log(f"[TTS] 切换到模型: {self.current_tts_model.upper()}")
+        tts_notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
         
-        # 更新显示和延迟保存（合并到一个trace，避免冲突）
-        self._nfe_save_timer = None
-        def update_nfe_display_and_save(*args):
-            nfe_val_label.config(text=str(int(self.nfe_steps_var.get())))
-            # 延迟保存（避免拖动时频繁保存）
-            if not self._loading_config:
-                if self._nfe_save_timer:
-                    self.root.after_cancel(self._nfe_save_timer)
-                self._nfe_save_timer = self.root.after(500, self.save_config)
+        # 默认选中第一个标签页（E2TTS）
+        tts_notebook.select(0)
+        self.current_tts_model = "e2tts"
         
-        # 绑定变量变化
-        self.nfe_steps_var.trace('w', update_nfe_display_and_save)
-
-        # 交叉淡入淡出时长 (Cross-Fade Duration)
-        ttk.Label(adv_frame, text="交叉淡入淡出:").grid(row=3, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 6))
-        self.crossfade_var = tk.DoubleVar(value=0.15)
-        crossfade_scale = ttk.Scale(adv_frame, from_=0.0, to=1.0, variable=self.crossfade_var, orient=tk.HORIZONTAL)
-        crossfade_scale.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 6))
-        # 不绑定 textvariable，手动更新，避免冲突
-        crossfade_val_label = ttk.Label(adv_frame, text="0.15", width=6)
-        crossfade_val_label.grid(row=3, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 6))
-        
-        # 更新显示和延迟保存（合并到一个trace，避免冲突）
-        self._crossfade_save_timer = None
-        def update_crossfade_display_and_save(*args):
-            crossfade_val_label.config(text=f"{self.crossfade_var.get():.2f}")
-            # 延迟保存（避免拖动时频繁保存）
-            if not self._loading_config:
-                if self._crossfade_save_timer:
-                    self.root.after_cancel(self._crossfade_save_timer)
-                self._crossfade_save_timer = self.root.after(500, self.save_config)
-        
-        # 绑定变量变化
-        self.crossfade_var.trace('w', update_crossfade_display_and_save)
-
-        # 操作按钮
-        self.tts_btn = ttk.Button(tts_frame, text="生成语音", command=self.start_tts)
-        self.tts_btn.grid(row=5, column=1, sticky=tk.W, padx=(0, 8), pady=(0, 8))
-        self.tts_save_btn = ttk.Button(tts_frame, text="保存音频...", command=self.save_audio, state=tk.DISABLED)
-        self.tts_save_btn.grid(row=5, column=2, sticky=tk.W, padx=(0, 8), pady=(0, 8))
-        self.tts_open_btn = ttk.Button(tts_frame, text="打开音频", command=self.open_audio, state=tk.DISABLED)
-        self.tts_open_btn.grid(row=5, column=3, sticky=tk.W, padx=(0, 8), pady=(0, 8))
-        self.reset_btn = ttk.Button(tts_frame, text="恢复默认设置", command=self.reset_to_defaults)
-        self.reset_btn.grid(row=5, column=0, sticky=tk.W, padx=(8, 8), pady=(0, 8))
-
-        self.tts_status_var = tk.StringVar(value="就绪")
-        ttk.Label(tts_frame, textvariable=self.tts_status_var, foreground="#666").grid(row=5, column=4, columnspan=2, sticky=tk.E)
-        self.tts_audio_path = None
+        # 为了向后兼容，将F5-TTS的变量作为默认变量（供其他地方引用）
+        # 这样原有的代码可以继续工作，同时新代码可以使用模型特定的变量
+        # 注意：变量访问将通过属性方法动态获取当前模型的变量
+        # 注意：self.tts_vars 已在 __init__ 中初始化
 
         # ========== 底部日志 ==========
         log_frame = ttk.LabelFrame(main_frame, text="日志")
@@ -362,6 +255,247 @@ class TextFormatter:
             self.log_text.config(state=tk.DISABLED)
         self.root.after(0, _append)
 
+    def _build_tts_tab(self, parent_frame, model_name):
+        """
+        为给定的标签页框架构建TTS UI
+        model_name: "f5tts" 或 "e2tts"
+        """
+        # 配置列权重
+        for i in range(6):
+            parent_frame.columnconfigure(i, weight=1)
+        
+        # 存储该模型的所有变量
+        model_vars = {}
+        
+        # 服务器地址
+        ttk.Label(parent_frame, text="服务地址:").grid(row=0, column=0, sticky=tk.W, padx=(8, 6), pady=(8, 4))
+        server_var = tk.StringVar(value="http://127.0.0.1:7860")
+        server_entry = ttk.Entry(parent_frame, textvariable=server_var)
+        server_entry.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=(0, 8), pady=(8, 4))
+        model_vars['server_var'] = server_var
+        
+        # 参考音频
+        ttk.Label(parent_frame, text="参考音频:").grid(row=1, column=0, sticky=tk.W, padx=(8, 6))
+        ref_audio_var = tk.StringVar()
+        ref_audio_entry = ttk.Entry(parent_frame, textvariable=ref_audio_var)
+        ref_audio_entry.grid(row=1, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=(0, 8))
+        
+        def browse_ref_audio():
+            file_path = filedialog.askopenfilename(title="选择参考音频", filetypes=[("音频文件", "*.wav;*.mp3;*.flac;*.m4a;*.ogg"), ("所有文件", "*.*")])
+            if file_path:
+                ref_audio_var.set(file_path)
+                filename = os.path.splitext(os.path.basename(file_path))[0]
+                ref_text_var.set(filename)
+                self.log(f"[{model_name.upper()}] 已选择参考音频: {file_path}, 参考文本已自动设置为文件名: {filename}")
+        
+        ttk.Button(parent_frame, text="选择...", command=browse_ref_audio, width=10).grid(row=1, column=3, sticky=tk.W, padx=(0, 8))
+        model_vars['ref_audio_var'] = ref_audio_var
+        
+        # 参考文本
+        ttk.Label(parent_frame, text="参考文本:").grid(row=2, column=0, sticky=tk.W, padx=(8, 6), pady=(6, 0))
+        ref_text_var = tk.StringVar()
+        ref_text_entry = ttk.Entry(parent_frame, textvariable=ref_text_var)
+        ref_text_entry.grid(row=2, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 8), pady=(6, 0))
+        model_vars['ref_text_var'] = ref_text_var
+        
+        # 生成文本
+        ttk.Label(parent_frame, text="生成文本:").grid(row=3, column=0, sticky=tk.NW, padx=(8, 6), pady=(6, 6))
+        gen_text = scrolledtext.ScrolledText(parent_frame, height=4, wrap=tk.WORD)
+        gen_text.grid(row=3, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 8), pady=(6, 6))
+        
+        def use_preview_text():
+            text = self.preview_text.get("1.0", tk.END).strip()
+            if not text:
+                text = self.input_text.get("1.0", tk.END).strip()
+            gen_text.delete("1.0", tk.END)
+            gen_text.insert("1.0", text)
+            if not self._loading_config:
+                self.save_config()
+        
+        ttk.Button(parent_frame, text="使用预览文本", command=use_preview_text).grid(row=3, column=4, sticky=tk.NE, padx=(0, 8), pady=(6, 6))
+        model_vars['gen_text'] = gen_text
+        
+        # 高级设置参数
+        adv_frame = ttk.LabelFrame(parent_frame, text="高级设置")
+        adv_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), padx=8, pady=(6, 6))
+        for i in range(4):
+            adv_frame.columnconfigure(i, weight=1)
+        
+        # 随机种子
+        randomize_seed_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(adv_frame, text="随机种子", variable=randomize_seed_var).grid(row=0, column=0, sticky=tk.W, padx=(8, 4))
+        ttk.Label(adv_frame, text="种子:").grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
+        default_seed = random.randint(1000000000, 9999999999)
+        seed_var = tk.IntVar(value=default_seed)
+        seed_entry = ttk.Entry(adv_frame, textvariable=seed_var, width=10)
+        seed_entry.grid(row=0, column=2, sticky=tk.W, padx=(0, 8))
+        
+        def validate_seed(*args):
+            try:
+                seed_val = seed_var.get()
+                if seed_val < 0:
+                    seed_var.set(0)
+                elif seed_val > 9999999999:
+                    seed_var.set(9999999999)
+            except (ValueError, TypeError):
+                seed_var.set(0)
+        
+        seed_var.trace('w', validate_seed)
+        model_vars['randomize_seed_var'] = randomize_seed_var
+        model_vars['seed_var'] = seed_var
+        
+        # 移除静音
+        remove_silences_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(adv_frame, text="移除静音", variable=remove_silences_var).grid(row=0, column=3, sticky=tk.W, padx=(8, 8))
+        model_vars['remove_silences_var'] = remove_silences_var
+        
+        # 播放速度
+        ttk.Label(adv_frame, text="播放速度:").grid(row=1, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 0))
+        speed_var = tk.DoubleVar(value=1.0)
+        speed_val_label = ttk.Label(adv_frame, text="1.0", width=6)
+        speed_val_label.grid(row=1, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        
+        speed_scale = ttk.Scale(adv_frame, from_=0.1, to=2.0, variable=speed_var, orient=tk.HORIZONTAL)
+        speed_scale.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 0))
+        
+        speed_save_timer = None
+        def update_speed_display_and_save(*args):
+            val = speed_var.get()
+            snapped = round(val / 0.1) * 0.1
+            if snapped < 0.1:
+                snapped = 0.1
+            elif snapped > 2.0:
+                snapped = 2.0
+            speed_val_label.config(text=f"{snapped:.1f}")
+            if not self._loading_config:
+                nonlocal speed_save_timer
+                if speed_save_timer:
+                    self.root.after_cancel(speed_save_timer)
+                speed_save_timer = self.root.after(500, self.save_config)
+        
+        speed_var.trace('w', update_speed_display_and_save)
+        model_vars['speed_var'] = speed_var
+        
+        # NFE Steps
+        ttk.Label(adv_frame, text="NFE步数:").grid(row=2, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 0))
+        nfe_steps_var = tk.IntVar(value=32)
+        nfe_scale = ttk.Scale(adv_frame, from_=4, to=64, variable=nfe_steps_var, orient=tk.HORIZONTAL)
+        nfe_scale.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 0))
+        nfe_val_label = ttk.Label(adv_frame, textvariable=nfe_steps_var, width=6)
+        nfe_val_label.grid(row=2, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        
+        nfe_save_timer = None
+        def update_nfe_display_and_save(*args):
+            nfe_val_label.config(text=str(int(nfe_steps_var.get())))
+            if not self._loading_config:
+                nonlocal nfe_save_timer
+                if nfe_save_timer:
+                    self.root.after_cancel(nfe_save_timer)
+                nfe_save_timer = self.root.after(500, self.save_config)
+        
+        nfe_steps_var.trace('w', update_nfe_display_and_save)
+        model_vars['nfe_steps_var'] = nfe_steps_var
+        
+        # 交叉淡入淡出
+        ttk.Label(adv_frame, text="交叉淡入淡出:").grid(row=3, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 6))
+        crossfade_var = tk.DoubleVar(value=0.15)
+        crossfade_scale = ttk.Scale(adv_frame, from_=0.0, to=1.0, variable=crossfade_var, orient=tk.HORIZONTAL)
+        crossfade_scale.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 6))
+        crossfade_val_label = ttk.Label(adv_frame, text="0.15", width=6)
+        crossfade_val_label.grid(row=3, column=2, sticky=tk.W, padx=(0, 8), pady=(6, 6))
+        
+        crossfade_save_timer = None
+        def update_crossfade_display_and_save(*args):
+            crossfade_val_label.config(text=f"{crossfade_var.get():.2f}")
+            if not self._loading_config:
+                nonlocal crossfade_save_timer
+                if crossfade_save_timer:
+                    self.root.after_cancel(crossfade_save_timer)
+                crossfade_save_timer = self.root.after(500, self.save_config)
+        
+        crossfade_var.trace('w', update_crossfade_display_and_save)
+        model_vars['crossfade_var'] = crossfade_var
+        
+        # 自动保存目录选项
+        ttk.Label(adv_frame, text="自动保存目录:").grid(row=4, column=0, sticky=tk.W, padx=(8, 4), pady=(6, 6))
+        auto_save_dir_var = tk.StringVar(value="")
+        auto_save_dir_entry = ttk.Entry(adv_frame, textvariable=auto_save_dir_var, width=40)
+        auto_save_dir_entry.grid(row=4, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=(8, 4), pady=(6, 6))
+        
+        def browse_auto_save_dir():
+            dir_path = filedialog.askdirectory(title="选择自动保存目录")
+            if dir_path:
+                auto_save_dir_var.set(dir_path)
+                if not self._loading_config:
+                    self.save_config()
+        
+        ttk.Button(adv_frame, text="选择...", command=browse_auto_save_dir).grid(row=4, column=3, sticky=tk.W, padx=(0, 8), pady=(6, 6))
+        
+        auto_save_dir_save_timer = None
+        def on_auto_save_dir_change(*args):
+            if not self._loading_config:
+                nonlocal auto_save_dir_save_timer
+                if auto_save_dir_save_timer:
+                    self.root.after_cancel(auto_save_dir_save_timer)
+                auto_save_dir_save_timer = self.root.after(500, self.save_config)
+        auto_save_dir_var.trace('w', on_auto_save_dir_change)
+        model_vars['auto_save_dir_var'] = auto_save_dir_var
+        
+        # 操作按钮
+        def start_tts():
+            self._start_tts_for_model(model_name)
+        
+        def reset_to_defaults():
+            self._reset_to_defaults_for_model(model_name)
+        
+        def save_audio():
+            self._save_audio_for_model(model_name)
+        
+        def open_audio():
+            self._open_audio_for_model(model_name)
+        
+        tts_btn = ttk.Button(parent_frame, text="生成语音", command=start_tts)
+        tts_btn.grid(row=5, column=1, sticky=tk.W, padx=(0, 8), pady=(0, 8))
+        model_vars['tts_btn'] = tts_btn
+        
+        tts_save_btn = ttk.Button(parent_frame, text="保存音频...", command=save_audio, state=tk.DISABLED)
+        tts_save_btn.grid(row=5, column=2, sticky=tk.W, padx=(0, 8), pady=(0, 8))
+        model_vars['tts_save_btn'] = tts_save_btn
+        
+        tts_open_btn = ttk.Button(parent_frame, text="打开音频", command=open_audio, state=tk.DISABLED)
+        tts_open_btn.grid(row=5, column=3, sticky=tk.W, padx=(0, 8), pady=(0, 8))
+        model_vars['tts_open_btn'] = tts_open_btn
+        
+        reset_btn = ttk.Button(parent_frame, text="恢复默认设置", command=reset_to_defaults)
+        reset_btn.grid(row=5, column=0, sticky=tk.W, padx=(8, 8), pady=(0, 8))
+        
+        tts_status_var = tk.StringVar(value="就绪")
+        ttk.Label(parent_frame, textvariable=tts_status_var, foreground="#666").grid(row=5, column=4, columnspan=2, sticky=tk.E)
+        model_vars['tts_status_var'] = tts_status_var
+        model_vars['tts_audio_path'] = None
+        
+        # 保存该模型的所有变量
+        self.tts_vars[model_name] = model_vars
+        
+        # 为了向后兼容，将F5-TTS的变量作为默认变量
+        if model_name == "f5tts":
+            self.server_var = server_var
+            self.ref_audio_var = ref_audio_var
+            self.ref_text_var = ref_text_var
+            self.gen_text = gen_text
+            self.randomize_seed_var = randomize_seed_var
+            self.seed_var = seed_var
+            self.remove_silences_var = remove_silences_var
+            self.speed_var = speed_var
+            self.nfe_steps_var = nfe_steps_var
+            self.crossfade_var = crossfade_var
+            self.auto_save_dir_var = auto_save_dir_var
+            self.tts_btn = tts_btn
+            self.tts_save_btn = tts_save_btn
+            self.tts_open_btn = tts_open_btn
+            self.tts_status_var = tts_status_var
+            self.tts_audio_path = None
+
     # ========== F5-TTS 相关方法 ==========
     def browse_ref_audio(self):
         file_path = filedialog.askopenfilename(title="选择参考音频", filetypes=[("音频文件", "*.wav;*.mp3;*.flac;*.m4a;*.ogg"), ("所有文件", "*.*")])
@@ -382,54 +516,491 @@ class TextFormatter:
         if not self._loading_config:
             self.save_config()
 
-    def start_tts(self):
+    def _start_tts_for_model(self, model_name):
+        """为指定模型启动TTS生成"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            self.log(f"[{model_name.upper()}][ERROR] 未找到模型变量")
+            return
+        
         # 如果选中了随机种子，每次生成时自动生成新的随机种子
-        if self.randomize_seed_var.get():
-            new_seed = random.randint(1000000000, 9999999999)  # 10位数字
-            self.seed_var.set(new_seed)
-            self.log(f"[TTS] 已自动生成新随机种子: {new_seed}")
+        if model_vars['randomize_seed_var'].get():
+            new_seed = random.randint(1000000000, 9999999999)
+            model_vars['seed_var'].set(new_seed)
+            self.log(f"[{model_name.upper()}] 已自动生成新随机种子: {new_seed}")
         
         # 防止阻塞UI，开线程
-        self.tts_btn.config(state=tk.DISABLED)
-        self.tts_status_var.set("正在请求F5-TTS...")
-        self.log("[TTS] start request")
-        threading.Thread(target=self._run_tts_safe, daemon=True).start()
+        model_vars['tts_btn'].config(state=tk.DISABLED)
+        model_vars['tts_status_var'].set(f"正在请求{model_name.upper()}...")
+        self.log(f"[{model_name.upper()}] start request")
+        threading.Thread(target=lambda: self._run_tts_safe_for_model(model_name), daemon=True).start()
+    
+    def start_tts(self):
+        """向后兼容的方法，使用当前选中的模型"""
+        self._start_tts_for_model(self.current_tts_model)
 
-    def _run_tts_safe(self):
+    def _generate_auto_save_filename(self, save_dir: str) -> str:
+        """
+        生成自动保存文件名：日期_编号.wav
+        例如：2025-11-01_001.wav
+        """
+        from datetime import datetime
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # 查找该日期下已有的文件编号
+        pattern = re.compile(rf"^{re.escape(date_str)}_(\d{{3}})\.wav$")
+        max_num = 0
+        
+        if os.path.isdir(save_dir):
+            for filename in os.listdir(save_dir):
+                match = pattern.match(filename)
+                if match:
+                    num = int(match.group(1))
+                    if num > max_num:
+                        max_num = num
+        
+        # 生成下一个编号（3位数字，不足补0）
+        next_num = max_num + 1
+        filename = f"{date_str}_{next_num:03d}.wav"
+        return os.path.join(save_dir, filename)
+    
+    def _auto_save_audio_for_model(self, model_name: str, audio_path: str) -> bool:
+        """为指定模型自动保存音频"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            return False
+        
+        auto_save_dir = model_vars['auto_save_dir_var'].get().strip()
+        if not auto_save_dir:
+            return False
+        
         try:
-            audio_path = self.call_f5tts()
+            if not os.path.isdir(auto_save_dir):
+                os.makedirs(auto_save_dir, exist_ok=True)
+                self.log(f"[{model_name.upper()}] 已创建自动保存目录: {auto_save_dir}")
+            
+            save_path = self._generate_auto_save_filename(auto_save_dir)
+            
+            with open(audio_path, "rb") as src, open(save_path, "wb") as dst:
+                dst.write(src.read())
+            
+            self.log(f"[{model_name.upper()}] 已自动保存音频: {save_path}")
+            return True
+        except Exception as e:
+            self.log(f"[{model_name.upper()}][ERROR] 自动保存音频失败: {e}")
+            return False
+    
+    def _auto_save_audio(self, audio_path: str) -> bool:
+        """向后兼容的方法，使用当前选中的模型"""
+        return self._auto_save_audio_for_model(self.current_tts_model, audio_path)
+
+    def _run_tts_safe_for_model(self, model_name):
+        """为指定模型运行TTS生成（线程安全）"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            self.log(f"[{model_name.upper()}][ERROR] 未找到模型变量")
+            return
+        
+        try:
+            audio_path = self._call_tts_for_model(model_name)
             def _ok():
                 if audio_path:
-                    self.tts_audio_path = audio_path
-                    self.tts_status_var.set(f"已生成: {os.path.basename(audio_path)}")
-                    self.tts_save_btn.config(state=tk.NORMAL)
-                    self.tts_open_btn.config(state=tk.NORMAL)
+                    model_vars['tts_audio_path'] = audio_path
+                    model_vars['tts_status_var'].set(f"已生成: {os.path.basename(audio_path)}")
+                    model_vars['tts_save_btn'].config(state=tk.NORMAL)
+                    model_vars['tts_open_btn'].config(state=tk.NORMAL)
+                    
+                    # 自动保存
+                    self._auto_save_audio_for_model(model_name, audio_path)
                 else:
-                    self.tts_status_var.set("未获取到音频结果")
-                self.tts_btn.config(state=tk.NORMAL)
+                    model_vars['tts_status_var'].set("未获取到音频结果")
+                model_vars['tts_btn'].config(state=tk.NORMAL)
             self.root.after(0, _ok)
         except Exception as e:
             err_msg = str(e)
             def _err(msg=err_msg):
-                self.tts_status_var.set(f"错误: {msg}")
-                self.log(f"[TTS][ERROR] {msg}")
-                self.tts_btn.config(state=tk.NORMAL)
+                model_vars['tts_status_var'].set(f"错误: {msg}")
+                self.log(f"[{model_name.upper()}][ERROR] {msg}")
+                model_vars['tts_btn'].config(state=tk.NORMAL)
             self.root.after(0, _err)
+    
+    def _run_tts_safe(self):
+        """向后兼容的方法，使用当前选中的模型"""
+        self._run_tts_safe_for_model(self.current_tts_model)
 
-    def call_f5tts(self):
-        server = self.server_var.get().rstrip('/')
-        ref_audio = self.ref_audio_var.get().strip()
-        ref_text = self.ref_text_var.get().strip()
-        gen_text = self.gen_text.get("1.0", tk.END).strip()
+    def _split_text_into_chunks(self, text: str, max_chars_per_chunk: int = 3000) -> list:
+        """
+        将文本智能分割成多个块
+        优先在段落边界分割，其次在句子边界分割
+        """
+        if len(text) <= max_chars_per_chunk:
+            return [text]
+        
+        chunks = []
+        # 首先按段落分割（双换行）
+        paragraphs = re.split(r'\n\s*\n', text)
+        
+        current_chunk = ""
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # 如果当前段落本身就超过限制，需要进一步分割
+            if len(para) > max_chars_per_chunk:
+                # 先保存当前chunk（如果有内容）
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                
+                # 按句子分割大段落
+                sentences = re.split(r'([.!?]\s+)', para)
+                current_sentence = ""
+                for sent in sentences:
+                    if not sent:
+                        continue
+                    if len(current_sentence + sent) <= max_chars_per_chunk:
+                        current_sentence += sent
+                    else:
+                        # 保存当前句子块
+                        if current_sentence:
+                            chunks.append(current_sentence.strip())
+                        # 如果单个句子就超过限制，强制分割
+                        if len(sent) > max_chars_per_chunk:
+                            # 按单词分割
+                            words = sent.split()
+                            current_word = ""
+                            for word in words:
+                                if len(current_word + " " + word) <= max_chars_per_chunk:
+                                    current_word += (" " + word) if current_word else word
+                                else:
+                                    if current_word:
+                                        chunks.append(current_word.strip())
+                                    current_word = word
+                            current_sentence = current_word
+                        else:
+                            current_sentence = sent
+                if current_sentence:
+                    chunks.append(current_sentence.strip())
+                    current_sentence = ""
+            else:
+                # 检查添加这个段落后是否超过限制
+                if len(current_chunk + "\n\n" + para) <= max_chars_per_chunk:
+                    if current_chunk:
+                        current_chunk += "\n\n" + para
+                    else:
+                        current_chunk = para
+                else:
+                    # 保存当前chunk，开始新chunk
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = para
+        
+        # 保存最后一个chunk
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks if chunks else [text]
+    
+    def _call_f5tts_single(self, model_name: str, gen_text: str, ref_text: str = None) -> str:
+        """
+        调用TTS生成单个音频块（内部方法，不读取UI）
+        返回临时文件路径
+        """
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            raise ValueError(f"未找到模型变量: {model_name}")
+        
+        server = model_vars['server_var'].get().rstrip('/')
+        ref_audio = model_vars['ref_audio_var'].get().strip()
+        if ref_text is None:
+            ref_text = model_vars['ref_text_var'].get().strip()
+        
+        # 使用现有的call_f5tts逻辑，但只处理单个文本块
+        file_part = None
+        if ref_audio and ref_audio.strip().lower().startswith(("http://", "https://")):
+            file_part = {"path": ref_audio.strip(), "meta": {"_type": "gradio.FileData"}}
+        elif ref_audio and os.path.isfile(ref_audio):
+            try:
+                file_part = self._upload_ref_to_gradio(server, ref_audio)
+            except Exception as up_err:
+                self.log(f"[TTS][WARN] upload failed, fallback sample: {up_err}")
+                file_part = {"path": "https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav", "meta": {"_type": "gradio.FileData"}}
+        else:
+            file_part = {"path": "https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav", "meta": {"_type": "gradio.FileData"}}
+        
+        # 获取模型特定的变量
+        remove_silences_var = model_vars['remove_silences_var']
+        randomize_seed_var = model_vars['randomize_seed_var']
+        seed_var = model_vars['seed_var']
+        speed_var = model_vars['speed_var']
+        nfe_steps_var = model_vars['nfe_steps_var']
+        crossfade_var = model_vars['crossfade_var']
+        
+        # 根据模型名称决定API端点
+        if model_name == "e2tts":
+            api_endpoint = "/gradio_api/call/basic_tts"  # 暂时使用相同的端点
+        else:
+            api_endpoint = "/gradio_api/call/basic_tts"  # F5-TTS端点
+        
+        # 辅助函数
+        def get_aligned_speed():
+            val = float(speed_var.get())
+            snapped = round(val / 0.1) * 0.1
+            if snapped < 0.1:
+                snapped = 0.1
+            elif snapped > 2.0:
+                snapped = 2.0
+            result = float(f"{snapped:.1f}")
+            return result
+        
+        def get_valid_seed():
+            try:
+                seed_val = int(seed_var.get())
+                if seed_val < 0:
+                    seed_val = 0
+                elif seed_val > 9999999999:
+                    seed_val = 9999999999
+                return seed_val
+            except (ValueError, TypeError):
+                return 0
+        
+        valid_seed = get_valid_seed()
+        aligned_speed = get_aligned_speed()
+        nfe_steps = int(nfe_steps_var.get())
+        crossfade = round(crossfade_var.get(), 2)
+        
+        data_array = [
+            file_part,
+            ref_text or "",
+            gen_text,
+            remove_silences_var.get(),
+            randomize_seed_var.get(),
+            valid_seed,
+            crossfade,
+            nfe_steps,
+            aligned_speed
+        ]
+        
+        url_call = f"{server}{api_endpoint}"
+        import json as json_module
+        req_body = {"data": data_array}
+        
+        resp = requests.post(url_call, json=req_body, headers={"Content-Type": "application/json"}, timeout=60)
+        resp.raise_for_status()
+        
+        event_id = None
+        try:
+            j = resp.json()
+            event_id = j.get("event_id") or j.get("eventId") or j.get("event")
+        except Exception:
+            text = resp.text
+            tokens = re.findall(r'"([^"]+)"', text)
+            if len(tokens) >= 2:
+                event_id = tokens[1]
+            elif tokens:
+                event_id = tokens[0]
+        
+        if not event_id:
+            raise RuntimeError("未获取到事件ID(event_id)")
+        
+        # 轮询获取音频
+        url_stream = f"{server}{api_endpoint}/{event_id}"
+        audio_url = None
+        transcribed_ref_text = None
+        
+        for _ in range(60):
+            if audio_url and transcribed_ref_text:
+                break
+            try:
+                r = requests.get(url_stream, timeout=30)
+                r.raise_for_status()
+                chunk = r.text
+                if chunk:
+                    import json as json_module
+                    lines = chunk.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith('data: '):
+                            line = line[6:].strip()
+                        try:
+                            msg_json = json_module.loads(line)
+                            if isinstance(msg_json, dict) and msg_json.get("msg") == "process_completed":
+                                output = msg_json.get("output", {})
+                                data = output.get("data", [])
+                                if isinstance(data, list) and len(data) >= 1:
+                                    audio_item = data[0]
+                                    if isinstance(audio_item, dict):
+                                        audio_url = audio_item.get("url") or audio_item.get("path")
+                                        if audio_url:
+                                            if '\\' in audio_url or audio_url.startswith('C:'):
+                                                audio_url = f"{server}/gradio_api/file={audio_url}"
+                                            elif audio_url.startswith('/'):
+                                                audio_url = f"{server}{audio_url}"
+                                        if len(data) >= 3 and isinstance(data[2], str):
+                                            transcribed_ref_text = data[2].strip()
+                        except Exception:
+                            continue
+                    if "event: complete" in chunk:
+                        data_match = re.search(r'data:\s*(\[.*?\])', chunk, re.DOTALL)
+                        if data_match:
+                            try:
+                                data_json_str = data_match.group(1)
+                                data_array = json_module.loads(data_json_str)
+                                if isinstance(data_array, list) and len(data_array) > 0:
+                                    first_item = data_array[0]
+                                    if isinstance(first_item, dict):
+                                        audio_url = first_item.get("url") or first_item.get("path")
+                                        if audio_url and '\\' in audio_url:
+                                            audio_url = f"{server}/gradio_api/file={audio_url}"
+                                        if len(data_array) >= 3 and isinstance(data_array[2], str):
+                                            transcribed_ref_text = data_array[2].strip()
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            if audio_url:
+                break
+            time.sleep(2)
+        
+        if not audio_url:
+            raise RuntimeError("未获取到音频结果")
+        
+        # 下载音频
+        wav_resp = requests.get(audio_url, timeout=120)
+        wav_resp.raise_for_status()
+        fd, tmp_path = tempfile.mkstemp(prefix="f5tts_chunk_", suffix=".wav")
+        os.close(fd)
+        with open(tmp_path, "wb") as f:
+            f.write(wav_resp.content)
+        
+        return tmp_path
+    
+    def _merge_audio_files(self, audio_files: list, output_path: str) -> str:
+        """
+        合并多个音频文件
+        返回输出文件路径
+        """
+        if not PYDUB_AVAILABLE:
+            raise RuntimeError("需要安装pydub库才能合并音频文件。请运行: pip install pydub")
+        
+        if not audio_files:
+            raise ValueError("没有音频文件可合并")
+        
+        self.log(f"[TTS] 开始合并 {len(audio_files)} 个音频文件...")
+        combined = None
+        
+        for i, audio_file in enumerate(audio_files):
+            self.log(f"[TTS] 合并第 {i+1}/{len(audio_files)} 个文件: {os.path.basename(audio_file)}")
+            try:
+                audio = AudioSegment.from_wav(audio_file)
+                if combined is None:
+                    combined = audio
+                else:
+                    combined += audio
+            except Exception as e:
+                self.log(f"[TTS][ERROR] 读取音频文件失败: {audio_file}, 错误: {e}")
+                raise
+        
+        combined.export(output_path, format="wav")
+        self.log(f"[TTS] 合并完成，输出文件: {output_path}, 时长: {len(combined)/1000:.2f} 秒")
+        return output_path
+
+    def _call_tts_for_model(self, model_name):
+        """为指定模型调用TTS API"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            raise ValueError(f"未找到模型变量: {model_name}")
+        
+        server = model_vars['server_var'].get().rstrip('/')
+        ref_audio = model_vars['ref_audio_var'].get().strip()
+        ref_text = model_vars['ref_text_var'].get().strip()
+        gen_text = model_vars['gen_text'].get("1.0", tk.END).strip()
         if not gen_text:
             raise ValueError("请先填写生成文本，或点击‘使用预览文本’")
         
-        # 重要提示：ref_text为空时，F5-TTS会用Whisper自动转写参考音频
+        # 重要提示：ref_text为空时，TTS会用Whisper自动转写参考音频
         # 转写结果只用于学习参考音频特征，不应出现在生成的音频中
         # 如果生成的音频中出现了参考音频的内容，建议手动填写ref_text以避免自动转写
         if not ref_text:
-            self.log(f"[TTS][INFO] ref_text为空，F5-TTS将使用Whisper自动转写参考音频")
-            self.log(f"[TTS][INFO] 提示：如果生成的音频中出现了参考音频的内容，建议手动填写ref_text以避免自动转写的影响")
+            self.log(f"[{model_name.upper()}][INFO] ref_text为空，{model_name.upper()}将使用Whisper自动转写参考音频")
+            self.log(f"[{model_name.upper()}][INFO] 提示：如果生成的音频中出现了参考音频的内容，建议手动填写ref_text以避免自动转写的影响")
+        
+        # 检查文本长度，如果过长则自动分割
+        # 估算：约150-200字符/分钟，20分钟约3000-4000字符
+        # 为了安全，设置每个块最大3000字符（约15-20分钟）
+        MAX_CHARS_PER_CHUNK = 3000
+        
+        if len(gen_text) > MAX_CHARS_PER_CHUNK:
+            self.log(f"[{model_name.upper()}] 检测到长文本（{len(gen_text)}字符），将自动分割成多个块")
+            
+            # 检查pydub是否可用
+            if not PYDUB_AVAILABLE:
+                raise RuntimeError("检测到长文本，需要安装pydub库才能合并音频文件。\n请运行: pip install pydub")
+            
+            chunks = self._split_text_into_chunks(gen_text, MAX_CHARS_PER_CHUNK)
+            self.log(f"[{model_name.upper()}] 文本已分割成 {len(chunks)} 个块")
+            
+            if len(chunks) > 1:
+                # 批量生成音频
+                audio_files = []
+                chunk_temp_files = []  # 记录临时文件，最后清理
+                
+                try:
+                    for i, chunk in enumerate(chunks):
+                        chunk_num = i + 1
+                        self.log(f"[{model_name.upper()}] 开始生成第 {chunk_num}/{len(chunks)} 块（{len(chunk)}字符）...")
+                        # 使用默认参数避免闭包问题
+                        def update_status(n=chunk_num, total=len(chunks)):
+                            model_vars['tts_status_var'].set(f"正在生成第 {n}/{total} 块...")
+                        self.root.after(0, update_status)
+                        
+                        # 为每个块生成音频（使用相同的参考文本和参考音频）
+                        chunk_audio_path = self._call_f5tts_single(model_name, chunk, ref_text)
+                        audio_files.append(chunk_audio_path)
+                        chunk_temp_files.append(chunk_audio_path)
+                        self.log(f"[{model_name.upper()}] 第 {chunk_num}/{len(chunks)} 块生成完成: {chunk_audio_path}")
+                    
+                    # 合并所有音频块
+                    self.log(f"[{model_name.upper()}] 开始合并 {len(audio_files)} 个音频块...")
+                    def update_merge_status():
+                        model_vars['tts_status_var'].set("正在合并音频...")
+                    self.root.after(0, update_merge_status)
+                    
+                    # 创建最终输出文件
+                    fd, final_path = tempfile.mkstemp(prefix="f5tts_merged_", suffix=".wav")
+                    os.close(fd)
+                    
+                    # 合并音频
+                    self._merge_audio_files(audio_files, final_path)
+                    
+                    # 清理临时文件
+                    for temp_file in chunk_temp_files:
+                        try:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        except Exception as e:
+                            self.log(f"[TTS][WARN] 清理临时文件失败: {temp_file}, 错误: {e}")
+                    
+                    self.log(f"[{model_name.upper()}] 所有音频块合并完成: {final_path}")
+                    return final_path
+                    
+                except Exception as e:
+                    # 清理已生成的临时文件
+                    for temp_file in chunk_temp_files:
+                        try:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        except Exception:
+                            pass
+                    raise Exception(f"批量生成音频时出错: {str(e)}")
+            else:
+                # 只有一个块，直接生成（虽然被分割了但只有一个块，继续使用原来的逻辑）
+                self.log(f"[TTS] 文本只有一个块，继续使用单块生成逻辑")
+        
+        # 以下是原来的单块生成逻辑（当文本长度不超过MAX_CHARS_PER_CHUNK时，或者只有一个块时）
         
         # 检查生成文本是否包含可疑内容
         if "destruction" in gen_text.lower() or "distruction" in gen_text.lower():
@@ -460,9 +1031,25 @@ class TextFormatter:
             # 无输入或非URL，使用示例音频
             file_part = {"path": "https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav", "meta": {"_type": "gradio.FileData"}}
 
+        # 获取模型特定的变量
+        remove_silences_var = model_vars['remove_silences_var']
+        randomize_seed_var = model_vars['randomize_seed_var']
+        seed_var = model_vars['seed_var']
+        speed_var = model_vars['speed_var']
+        nfe_steps_var = model_vars['nfe_steps_var']
+        crossfade_var = model_vars['crossfade_var']
+        
+        # 根据模型名称决定API端点
+        # TODO: 如果E2TTS使用不同的端点，需要在这里修改
+        if model_name == "e2tts":
+            api_endpoint = "/gradio_api/call/basic_tts"  # 暂时使用相同的端点，可能需要根据实际情况修改
+            self.log(f"[{model_name.upper()}] 使用E2TTS端点: {api_endpoint}")
+        else:
+            api_endpoint = "/gradio_api/call/basic_tts"  # F5-TTS端点
+        
         # 辅助函数：获取对齐后的速度值（四舍五入到0.1的倍数，确保精确对齐）
         def get_aligned_speed():
-            val = float(self.speed_var.get())
+            val = float(speed_var.get())
             # 精确对齐到0.1的倍数，避免浮点数精度问题
             snapped = round(val / 0.1) * 0.1
             if snapped < 0.1:
@@ -477,7 +1064,7 @@ class TextFormatter:
         # 辅助函数：获取有效的种子值（支持10位数字：0-9999999999），与前端保持一致
         def get_valid_seed():
             try:
-                seed_val = int(self.seed_var.get())
+                seed_val = int(seed_var.get())
                 # 限制种子值在10位数字范围内（0-9999999999）
                 if seed_val < 0:
                     seed_val = 0
@@ -487,30 +1074,30 @@ class TextFormatter:
                     self.log(f"[TTS][WARN] 种子值超过最大值，已调整为9999999999")
                 # 注意：即使 randomize_seed 为 True，也应该传递实际的种子值
                 # F5-TTS 会根据 randomize_seed 标志决定是否使用这个种子值
-                self.log(f"[TTS] 使用种子值: {seed_val} (randomize_seed={self.randomize_seed_var.get()})")
+                self.log(f"[{model_name.upper()}] 使用种子值: {seed_val} (randomize_seed={randomize_seed_var.get()})")
                 return seed_val
             except (ValueError, TypeError) as e:
                 # 如果种子值无效，返回0并记录错误
-                self.log(f"[TTS][ERROR] 种子值无效: {self.seed_var.get()}, 错误: {e}, 使用默认值0")
+                self.log(f"[{model_name.upper()}][ERROR] 种子值无效: {seed_var.get()}, 错误: {e}, 使用默认值0")
                 return 0
         
         # 根据 F12 payload 的正确参数顺序：ref_audio, ref_text, gen_text, remove_silences, randomize_seed, seed, crossfade_duration, nfe_steps, speed
         # 注意：从错误看，参数顺序应该是：remove_silences, randomize_seed, seed, crossfade, nfe_steps, speed
         valid_seed = get_valid_seed()  # 先获取，确保是整数
         aligned_speed = get_aligned_speed()  # 先获取，确保是浮点数
-        nfe_steps = int(self.nfe_steps_var.get())  # 确保是整数
-        crossfade = round(self.crossfade_var.get(), 2)  # 确保是浮点数
+        nfe_steps = int(nfe_steps_var.get())  # 确保是整数
+        crossfade = round(crossfade_var.get(), 2)  # 确保是浮点数
         
         # 验证参数类型和值
-        self.log(f"[TTS] 参数验证:")
+        self.log(f"[{model_name.upper()}] 参数验证:")
         self.log(f"  - ref_text: '{ref_text[:100]}...' (长度: {len(ref_text)}, 完整内容: {repr(ref_text[:200])})")
         self.log(f"  - gen_text: '{gen_text[:100]}...' (长度: {len(gen_text)}, 完整内容: {repr(gen_text[:200])})")
-        self.log(f"  - remove_silences: {self.remove_silences_var.get()} (类型: {type(self.remove_silences_var.get())})")
-        self.log(f"  - randomize_seed: {self.randomize_seed_var.get()} (类型: {type(self.randomize_seed_var.get())})")
+        self.log(f"  - remove_silences: {remove_silences_var.get()} (类型: {type(remove_silences_var.get())})")
+        self.log(f"  - randomize_seed: {randomize_seed_var.get()} (类型: {type(randomize_seed_var.get())})")
         self.log(f"  - seed: {valid_seed} (类型: {type(valid_seed)})")
         self.log(f"  - crossfade: {crossfade} (类型: {type(crossfade)})")
         self.log(f"  - nfe_steps: {nfe_steps} (类型: {type(nfe_steps)})")
-        self.log(f"  - speed: {aligned_speed} (类型: {type(aligned_speed)}, 原始值: {self.speed_var.get()}, 对齐后: {aligned_speed})")
+        self.log(f"  - speed: {aligned_speed} (类型: {type(aligned_speed)}, 原始值: {speed_var.get()}, 对齐后: {aligned_speed})")
         
         # 验证速度值的有效性
         if aligned_speed < 0.1 or aligned_speed > 2.0:
@@ -530,12 +1117,12 @@ class TextFormatter:
             file_part,
             ref_text or "",
             gen_text,
-            self.remove_silences_var.get(),  # remove_silences (bool)
-            self.randomize_seed_var.get(),   # randomize_seed (bool)
-            valid_seed,                      # seed (int)
-            crossfade,                       # crossfade_duration (float)
-            nfe_steps,                       # nfe_steps (int)
-            aligned_speed                    # speed (float)
+            remove_silences_var.get(),  # remove_silences (bool)
+            randomize_seed_var.get(),   # randomize_seed (bool)
+            valid_seed,                 # seed (int)
+            crossfade,                   # crossfade_duration (float)
+            nfe_steps,                   # nfe_steps (int)
+            aligned_speed                # speed (float)
         ]
 
         # 安全兜底：如果用户直接输入了本地路径（非上传后的路径），则拦截
@@ -554,7 +1141,9 @@ class TextFormatter:
 
         url_call = f"{server}/gradio_api/call/basic_tts"
         # 完全按你提供的 curl 流程：先 /gradio_api/call/basic_tts 取 event_id，再流式拉取
-        self.root.after(0, lambda: self.tts_status_var.set("已发送请求，等待事件ID..."))
+        def update_status():
+            model_vars['tts_status_var'].set("已发送请求，等待事件ID...")
+        self.root.after(0, update_status)
         # 打印完整请求体用于对比F12
         import json as json_module
         # 确保所有参数类型正确，特别是数值类型
@@ -570,16 +1159,16 @@ class TextFormatter:
             "nfe_steps": type(data_array[7]).__name__,
             "speed": type(data_array[8]).__name__
         }
-        self.log(f"[TTS] 参数类型检查: {type_check}")
+        self.log(f"[{model_name.upper()}] 参数类型检查: {type_check}")
         
         req_body = {"data": data_array}
-        self.log(f"[TTS] POST {url_call}")
-        self.log(f"[TTS] 参数: randomize_seed={self.randomize_seed_var.get()}, seed={valid_seed}, speed={aligned_speed}, nfe_steps={nfe_steps}, crossfade={crossfade}")
-        self.log(f"[TTS] REQUEST BODY: {json_module.dumps(req_body, indent=2, ensure_ascii=False)}")
+        self.log(f"[{model_name.upper()}] POST {url_call}")
+        self.log(f"[{model_name.upper()}] 参数: randomize_seed={randomize_seed_var.get()}, seed={valid_seed}, speed={aligned_speed}, nfe_steps={nfe_steps}, crossfade={crossfade}")
+        self.log(f"[{model_name.upper()}] REQUEST BODY: {json_module.dumps(req_body, indent=2, ensure_ascii=False)}")
         # 特别检查速度值，因为用户反馈速度不是1时有问题
         if aligned_speed != 1.0:
-            self.log(f"[TTS][DEBUG] 速度值详情: 原始={self.speed_var.get()}, 对齐后={aligned_speed}, 类型={type(aligned_speed)}, JSON序列化后={json_module.dumps(aligned_speed)}")
-            self.log(f"[TTS][DEBUG] data_array[8] (speed) = {data_array[8]}, 类型={type(data_array[8])}")
+            self.log(f"[{model_name.upper()}][DEBUG] 速度值详情: 原始={speed_var.get()}, 对齐后={aligned_speed}, 类型={type(aligned_speed)}, JSON序列化后={json_module.dumps(aligned_speed)}")
+            self.log(f"[{model_name.upper()}][DEBUG] data_array[8] (speed) = {data_array[8]}, 类型={type(data_array[8])}")
         resp = requests.post(url_call, json=req_body, headers={"Content-Type": "application/json"}, timeout=60)
         resp.raise_for_status()
         event_id = None
@@ -602,9 +1191,11 @@ class TextFormatter:
             raise RuntimeError("未获取到事件ID(event_id)")
 
         # 流式读取结果
-        url_stream = f"{server}/gradio_api/call/basic_tts/{event_id}"
-        self.root.after(0, lambda: self.tts_status_var.set("已获取事件ID，正在生成音频..."))
-        self.log(f"[TTS] stream url: {url_stream}")
+        url_stream = f"{server}{api_endpoint}/{event_id}"
+        def update_status3():
+            model_vars['tts_status_var'].set("已获取事件ID，正在生成音频...")
+        self.root.after(0, update_status3)
+        self.log(f"[{model_name.upper()}] stream url: {url_stream}")
         # 轮询查询，直到生成完成拿到 wav（最多等待 ~120 秒）
         audio_url = None
         content = ""
@@ -664,12 +1255,12 @@ class TextFormatter:
                             try:
                                 msg_json = json_module.loads(line)
                                 if isinstance(msg_json, dict) and msg_json.get("msg") == "process_completed":
-                                    self.log(f"[TTS] 检测到process_completed消息（JSON格式）")
+                                    self.log(f"[{model_name.upper()}] 检测到process_completed消息（JSON格式）")
                                     output = msg_json.get("output", {})
                                     data = output.get("data", [])
-                                    self.log(f"[TTS][DEBUG] output.data长度: {len(data) if isinstance(data, list) else 'N/A'}")
+                                    self.log(f"[{model_name.upper()}][DEBUG] output.data长度: {len(data) if isinstance(data, list) else 'N/A'}")
                                     if isinstance(data, list):
-                                        self.log(f"[TTS][DEBUG] data内容预览: {str(data)[:500]}")
+                                        self.log(f"[{model_name.upper()}][DEBUG] data内容预览: {str(data)[:500]}")
                                     if isinstance(data, list) and len(data) >= 1:
                                         # data[0] 是音频文件对象
                                         audio_item = data[0]
@@ -687,21 +1278,21 @@ class TextFormatter:
                                                 elif audio_url.startswith('/'):
                                                     # 相对路径，添加server
                                                     audio_url = f"{server}{audio_url}"
-                                                self.log(f"[TTS] 从process_completed提取到音频URL: {audio_url}")
+                                                self.log(f"[{model_name.upper()}] 从process_completed提取到音频URL: {audio_url}")
                                                 # 提取转写的参考文本（output.data[2]是转写的参考文本）
-                                                self.log(f"[TTS][DEBUG] 尝试提取转写文本，data长度={len(data)}")
+                                                self.log(f"[{model_name.upper()}][DEBUG] 尝试提取转写文本，data长度={len(data)}")
                                                 if len(data) >= 3:
-                                                    self.log(f"[TTS][DEBUG] data[2]类型: {type(data[2])}, 值预览: {str(data[2])[:100]}")
+                                                    self.log(f"[{model_name.upper()}][DEBUG] data[2]类型: {type(data[2])}, 值预览: {str(data[2])[:100]}")
                                                     if isinstance(data[2], str):
                                                         transcribed_ref_text = data[2].strip()
                                                         if transcribed_ref_text:
-                                                            self.log(f"[TTS] 从process_completed提取到转写的参考文本: {transcribed_ref_text[:100]}")
+                                                            self.log(f"[{model_name.upper()}] 从process_completed提取到转写的参考文本: {transcribed_ref_text[:100]}")
                                                         else:
-                                                            self.log(f"[TTS][WARN] data[2]存在但为空字符串")
+                                                            self.log(f"[{model_name.upper()}][WARN] data[2]存在但为空字符串")
                                                     else:
-                                                        self.log(f"[TTS][WARN] data[2]不是字符串，类型={type(data[2])}")
+                                                        self.log(f"[{model_name.upper()}][WARN] data[2]不是字符串，类型={type(data[2])}")
                                                 else:
-                                                    self.log(f"[TTS][WARN] data数组长度不足，len={len(data)}, 需要至少3个元素（音频、图片、转写文本）")
+                                                    self.log(f"[{model_name.upper()}][WARN] data数组长度不足，len={len(data)}, 需要至少3个元素（音频、图片、转写文本）")
                                                 # 找到音频URL，跳出内层循环，外层循环会在下次迭代时检查audio_url并退出
                                                 break
                             except json_module.JSONDecodeError:
@@ -937,30 +1528,32 @@ class TextFormatter:
         
         # 如果获取到转写结果，更新reference text框
         # 无论当前ref_text是什么，都用服务器返回的转写结果更新
-        self.log(f"[TTS][DEBUG] 检查转写文本: transcribed_ref_text={transcribed_ref_text}")
+        self.log(f"[{model_name.upper()}][DEBUG] 检查转写文本: transcribed_ref_text={transcribed_ref_text}")
         if transcribed_ref_text and transcribed_ref_text.strip():
             transcribed_text = transcribed_ref_text.strip()
-            self.log(f"[TTS] 准备更新参考文本为转写结果: {transcribed_text[:100]}")
+            self.log(f"[{model_name.upper()}] 准备更新参考文本为转写结果: {transcribed_text[:100]}")
             def update_ref_text():
-                # 更新UI中的参考文本字段
-                self.ref_text_var.set(transcribed_text)
-                self.log(f"[TTS] 已自动更新参考文本为转写结果: {transcribed_text[:100]}")
+                # 更新对应模型的参考文本字段
+                model_vars['ref_text_var'].set(transcribed_text)
+                self.log(f"[{model_name.upper()}] 已自动更新参考文本为转写结果: {transcribed_text[:100]}")
                 # 延迟保存配置，确保ref_text也被保存
                 self.root.after(500, self.save_config)
             self.root.after(0, update_ref_text)
         else:
-            self.log(f"[TTS][WARN] 未获取到转写文本，transcribed_ref_text={transcribed_ref_text}")
+            self.log(f"[{model_name.upper()}][WARN] 未获取到转写文本，transcribed_ref_text={transcribed_ref_text}")
 
         # 下载到临时文件
-        self.root.after(0, lambda: self.tts_status_var.set("正在下载音频..."))
-        self.log(f"[TTS] download: {audio_url}")
+        def update_download_status():
+            model_vars['tts_status_var'].set("正在下载音频...")
+        self.root.after(0, update_download_status)
+        self.log(f"[{model_name.upper()}] download: {audio_url}")
         wav_resp = requests.get(audio_url, timeout=120)
         wav_resp.raise_for_status()
         fd, tmp_path = tempfile.mkstemp(prefix="f5tts_", suffix=".wav")
         os.close(fd)
         with open(tmp_path, "wb") as f:
             f.write(wav_resp.content)
-        self.log(f"[TTS] saved: {tmp_path} size={len(wav_resp.content)} bytes")
+        self.log(f"[{model_name.upper()}] saved: {tmp_path} size={len(wav_resp.content)} bytes")
         return tmp_path
 
     def _upload_ref_to_gradio(self, server: str, local_path: str):
@@ -1064,26 +1657,56 @@ class TextFormatter:
             self.log(f"[TTS][UPLOAD][ERROR] {e}")
             raise RuntimeError(f"参考音频上传失败: {e}")
 
-    def save_audio(self):
-        if not self.tts_audio_path or not os.path.isfile(self.tts_audio_path):
+    def _save_audio_for_model(self, model_name):
+        """为指定模型保存音频"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars or not model_vars.get('tts_audio_path') or not os.path.isfile(model_vars['tts_audio_path']):
             messagebox.showwarning("提示", "没有可保存的音频。")
             return
         out_path = filedialog.asksaveasfilename(title="保存音频", defaultextension=".wav", filetypes=[("WAV 音频", "*.wav"), ("所有文件", "*.*")])
         if not out_path:
             return
         try:
-            with open(self.tts_audio_path, "rb") as src, open(out_path, "wb") as dst:
+            with open(model_vars['tts_audio_path'], "rb") as src, open(out_path, "wb") as dst:
                 dst.write(src.read())
             messagebox.showinfo("成功", f"已保存到: {out_path}")
         except Exception as e:
             messagebox.showerror("错误", f"保存失败: {e}")
 
-    def open_audio(self):
-        if self.tts_audio_path and os.path.isfile(self.tts_audio_path):
+    def _open_audio_for_model(self, model_name):
+        """为指定模型打开音频"""
+        model_vars = self.tts_vars.get(model_name)
+        if model_vars and model_vars.get('tts_audio_path') and os.path.isfile(model_vars['tts_audio_path']):
             try:
-                os.startfile(self.tts_audio_path)
+                os.startfile(model_vars['tts_audio_path'])
             except Exception as e:
                 messagebox.showerror("错误", f"无法打开音频: {e}")
+
+    def _reset_to_defaults_for_model(self, model_name):
+        """为指定模型恢复默认设置"""
+        model_vars = self.tts_vars.get(model_name)
+        if not model_vars:
+            return
+        
+        # 只恢复高级设置默认值
+        model_vars['randomize_seed_var'].set(True)
+        model_vars['seed_var'].set(random.randint(1000000000, 9999999999))
+        model_vars['remove_silences_var'].set(False)
+        model_vars['speed_var'].set(1.0)
+        model_vars['nfe_steps_var'].set(32)
+        model_vars['crossfade_var'].set(0.15)
+        
+        self.log(f"[{model_name.upper()}] 已恢复高级设置为默认值")
+        if not self._loading_config:
+            self.save_config()
+
+    def save_audio(self):
+        """向后兼容的方法，使用当前选中的模型"""
+        self._save_audio_for_model(self.current_tts_model)
+
+    def open_audio(self):
+        """向后兼容的方法，使用当前选中的模型"""
+        self._open_audio_for_model(self.current_tts_model)
     
     def load_config(self):
         """从配置文件加载上次的设置"""
@@ -1094,38 +1717,87 @@ class TextFormatter:
             if os.path.isfile(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    
-                # 恢复服务器地址
-                if 'server' in config:
-                    self.server_var.set(config['server'])
-                    
-                # 恢复参考音频路径（如果文件存在）
-                if 'ref_audio' in config and config['ref_audio']:
-                    if os.path.isfile(config['ref_audio']) or config['ref_audio'].startswith('http'):
-                        self.ref_audio_var.set(config['ref_audio'])
+                
+                # 支持旧版配置格式（单个模型）和新版格式（多个模型）
+                # 如果存在 'f5tts' 或 'e2tts' 键，说明是新版格式
+                if 'f5tts' in config or 'e2tts' in config:
+                    # 新版格式：每个模型独立配置
+                    for model_name in ['f5tts', 'e2tts']:
+                        if model_name not in self.tts_vars:
+                            continue
+                        model_vars = self.tts_vars[model_name]
+                        model_config = config.get(model_name, {})
                         
-                # 恢复参考文本
-                if 'ref_text' in config:
-                    self.ref_text_var.set(config['ref_text'])
+                        # 恢复服务器地址
+                        if 'server' in model_config:
+                            model_vars['server_var'].set(model_config['server'])
+                        
+                        # 恢复参考音频路径
+                        if 'ref_audio' in model_config and model_config['ref_audio']:
+                            if os.path.isfile(model_config['ref_audio']) or model_config['ref_audio'].startswith('http'):
+                                model_vars['ref_audio_var'].set(model_config['ref_audio'])
+                        
+                        # 恢复参考文本
+                        if 'ref_text' in model_config:
+                            model_vars['ref_text_var'].set(model_config['ref_text'])
+                        
+                        # 恢复生成文本
+                        if 'gen_text' in model_config:
+                            model_vars['gen_text'].delete('1.0', tk.END)
+                            model_vars['gen_text'].insert('1.0', model_config['gen_text'])
+                        
+                        # 恢复高级设置
+                        if 'remove_silences' in model_config:
+                            model_vars['remove_silences_var'].set(model_config['remove_silences'])
+                        if 'randomize_seed' in model_config:
+                            model_vars['randomize_seed_var'].set(model_config['randomize_seed'])
+                        if 'seed' in model_config:
+                            model_vars['seed_var'].set(model_config['seed'])
+                        if 'speed' in model_config:
+                            model_vars['speed_var'].set(model_config['speed'])
+                        if 'nfe_steps' in model_config:
+                            model_vars['nfe_steps_var'].set(model_config['nfe_steps'])
+                        if 'crossfade' in model_config:
+                            model_vars['crossfade_var'].set(model_config['crossfade'])
+                        if 'auto_save_dir' in model_config:
+                            model_vars['auto_save_dir_var'].set(model_config['auto_save_dir'])
+                else:
+                    # 旧版格式：只有一个模型（F5-TTS）的配置，需要迁移
+                    # 恢复服务器地址（只恢复到F5-TTS，如果有的话）
+                    if 'server' in config and 'f5tts' in self.tts_vars:
+                        self.tts_vars['f5tts']['server_var'].set(config['server'])
                     
-                # 恢复生成文本
-                if 'gen_text' in config:
-                    self.gen_text.delete('1.0', tk.END)
-                    self.gen_text.insert('1.0', config['gen_text'])
+                    # 恢复参考音频路径
+                    if 'ref_audio' in config and config['ref_audio'] and 'f5tts' in self.tts_vars:
+                        if os.path.isfile(config['ref_audio']) or config['ref_audio'].startswith('http'):
+                            self.tts_vars['f5tts']['ref_audio_var'].set(config['ref_audio'])
                     
-                # 恢复高级设置
-                if 'remove_silences' in config:
-                    self.remove_silences_var.set(config['remove_silences'])
-                if 'randomize_seed' in config:
-                    self.randomize_seed_var.set(config['randomize_seed'])
-                if 'seed' in config:
-                    self.seed_var.set(config['seed'])
-                if 'speed' in config:
-                    self.speed_var.set(config['speed'])
-                if 'nfe_steps' in config:
-                    self.nfe_steps_var.set(config['nfe_steps'])
-                if 'crossfade' in config:
-                    self.crossfade_var.set(config['crossfade'])
+                    # 恢复参考文本
+                    if 'ref_text' in config and 'f5tts' in self.tts_vars:
+                        self.tts_vars['f5tts']['ref_text_var'].set(config['ref_text'])
+                    
+                    # 恢复生成文本
+                    if 'gen_text' in config and 'f5tts' in self.tts_vars:
+                        self.tts_vars['f5tts']['gen_text'].delete('1.0', tk.END)
+                        self.tts_vars['f5tts']['gen_text'].insert('1.0', config['gen_text'])
+                    
+                    # 恢复高级设置
+                    if 'f5tts' in self.tts_vars:
+                        f5tts_vars = self.tts_vars['f5tts']
+                        if 'remove_silences' in config:
+                            f5tts_vars['remove_silences_var'].set(config['remove_silences'])
+                        if 'randomize_seed' in config:
+                            f5tts_vars['randomize_seed_var'].set(config['randomize_seed'])
+                        if 'seed' in config:
+                            f5tts_vars['seed_var'].set(config['seed'])
+                        if 'speed' in config:
+                            f5tts_vars['speed_var'].set(config['speed'])
+                        if 'nfe_steps' in config:
+                            f5tts_vars['nfe_steps_var'].set(config['nfe_steps'])
+                        if 'crossfade' in config:
+                            f5tts_vars['crossfade_var'].set(config['crossfade'])
+                        if 'auto_save_dir' in config:
+                            f5tts_vars['auto_save_dir_var'].set(config['auto_save_dir'])
                     
             # 清除标志
             self._loading_config = False
@@ -1136,18 +1808,28 @@ class TextFormatter:
     def save_config(self):
         """保存当前设置到配置文件"""
         try:
-            config = {
-                'server': self.server_var.get(),
-                'ref_audio': self.ref_audio_var.get(),
-                'ref_text': self.ref_text_var.get(),
-                'gen_text': self.gen_text.get('1.0', tk.END).strip(),
-                'remove_silences': self.remove_silences_var.get(),
-                'randomize_seed': self.randomize_seed_var.get(),
-                'seed': self.seed_var.get(),
-                'speed': self.speed_var.get(),
-                'nfe_steps': self.nfe_steps_var.get(),
-                'crossfade': self.crossfade_var.get()
-            }
+            config = {}
+            
+            # 保存每个模型的独立配置
+            for model_name in ['f5tts', 'e2tts']:
+                if model_name not in self.tts_vars:
+                    continue
+                
+                model_vars = self.tts_vars[model_name]
+                config[model_name] = {
+                    'server': model_vars['server_var'].get(),
+                    'ref_audio': model_vars['ref_audio_var'].get(),
+                    'ref_text': model_vars['ref_text_var'].get(),
+                    'gen_text': model_vars['gen_text'].get('1.0', tk.END).strip(),
+                    'remove_silences': model_vars['remove_silences_var'].get(),
+                    'randomize_seed': model_vars['randomize_seed_var'].get(),
+                    'seed': model_vars['seed_var'].get(),
+                    'speed': model_vars['speed_var'].get(),
+                    'nfe_steps': model_vars['nfe_steps_var'].get(),
+                    'crossfade': model_vars['crossfade_var'].get(),
+                    'auto_save_dir': model_vars['auto_save_dir_var'].get()
+                }
+            
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
         except Exception as e:
